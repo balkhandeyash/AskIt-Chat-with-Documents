@@ -6,46 +6,42 @@ from docx import Document
 from PyPDF2 import PdfReader
 from dotenv import load_dotenv
 
-from langchain.text_splitter import CharacterTextSplitter
+from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
-# Load environment variables
+# Configuration
+os.environ["USER_AGENT"] = "MyChatApp/1.0"
 load_dotenv()
 HUGGINGFACE_API_TOKEN = os.environ.get("HUGGINGFACEHUB_API_TOKEN")
+
+# -----------------------------
+# SESSION STATE INITIALIZATION
+# -----------------------------
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []  # To store list of {question, answer}
 
 # -----------------------------
 # ANSWER QUESTIONS
 # -----------------------------
 def answer_question(vectorstore, query):
     try:
-        # 1. Retrieve Context
         count = vectorstore._collection.count()
         docs = vectorstore.similarity_search(query, k=min(3, count) if count > 0 else 1)
         context = "\n".join([doc.page_content for doc in docs])
 
-        # 2. Updated stable endpoint for the router
-        # Note: the '/hf-inference' part is often redundant in the newest v1 path
         API_URL = "https://router.huggingface.co/v1/chat/completions"
-        
         headers = {
             "Authorization": f"Bearer {HUGGINGFACE_API_TOKEN}",
             "Content-Type": "application/json"
         }
         
-        # 3. Payload with a guaranteed "warm" model
         payload = {
             "model": "Qwen/Qwen2.5-7B-Instruct", 
             "messages": [
-                {
-                    "role": "system", 
-                    "content": "You are a helpful assistant. Use ONLY the provided context to answer."
-                },
-                {
-                    "role": "user", 
-                    "content": f"Context:\n{context}\n\nQuestion: {query}"
-                }
+                {"role": "system", "content": "You are a helpful assistant. Use ONLY the provided context to answer."},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
             ],
             "max_tokens": 512,
             "temperature": 0.1
@@ -53,29 +49,23 @@ def answer_question(vectorstore, query):
 
         response = requests.post(API_URL, headers=headers, json=payload)
         
-        # Check if the response is actually JSON before parsing
         if response.status_code == 200:
-            try:
-                return response.json()['choices'][0]['message']['content']
-            except requests.exceptions.JSONDecodeError:
-                return f"Decoding Error: Received non-JSON response: {response.text[:200]}"
+            answer = response.json()['choices'][0]['message']['content']
+            # SAVE TO HISTORY
+            st.session_state.chat_history.append({"question": query, "answer": answer})
+            return answer
         else:
             return f"Error {response.status_code}: {response.text}"
-
     except Exception as e:
         return f"System Error: {str(e)}"
+
 # -----------------------------
-# CACHE THE EMBEDDINGS
+# CACHE THE EMBEDDINGS & PROCESSOR
 # -----------------------------
 @st.cache_resource
 def load_embeddings():
-    return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"
-    )
+    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 
-# -----------------------------
-# PROCESS INPUT DOCUMENTS
-# -----------------------------
 def process_input(input_type, input_data):
     documents = ""
     splitter = CharacterTextSplitter(chunk_size=700, chunk_overlap=70)
@@ -120,6 +110,22 @@ def main():
             st.success("API Token Connected")
         else:
             st.error("Missing HUGGINGFACEHUB_API_TOKEN in .env")
+        
+        # --- NEW HISTORY SECTION ---
+        st.divider()
+        st.subheader("📜 Chat History")
+        if not st.session_state.chat_history:
+            st.info("No questions asked yet.")
+        else:
+            if st.button("Clear History"):
+                st.session_state.chat_history = []
+                st.rerun()
+            
+            # Display history in expanders (Hide/Unhide functionality)
+            for i, chat in enumerate(reversed(st.session_state.chat_history)):
+                with st.expander(f"Q: {chat['question'][:30]}..."):
+                    st.write(f"**Question:** {chat['question']}")
+                    st.write(f"**Answer:** {chat['answer']}")
 
     input_type = st.selectbox("Select Input Type", ["Link", "PDF", "Text", "DOCX", "TXT"])
 
