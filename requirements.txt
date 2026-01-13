@@ -1,0 +1,18 @@
+# Core packages
+streamlit==1.25.0
+numpy==1.26.4
+PyPDF2==2.12.1
+python-docx==0.8.12
+nltk==3.9.2
+
+# LangChain
+langchain==0.1.16
+langchain-community==0.0.32
+chromadb==0.3.29
+
+# HuggingFace & Embeddings
+sentence-transformers==2.2.2
+huggingface-hub==0.13.4
+transformers==4.57.3
+torch==2.0.1
+streamlit run app.py
